@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.chronophoto.data.capture.CameraCapabilities
 import com.chronophoto.data.capture.ChronoCameraController
 import com.chronophoto.data.capture.LiveCameraReadout
 import com.chronophoto.data.capture.MetadataCollector
@@ -35,7 +36,15 @@ data class CaptureUiState(
     val lensFacing: Int = CameraSelector.LENS_FACING_BACK,
     val frontAvailable: Boolean = false,
     val backAvailable: Boolean = true,
-)
+    val manualMode: Boolean = false,
+    val capabilities: CameraCapabilities = CameraCapabilities(),
+    val targetIso: Int? = null,
+    val targetExposureNs: Long? = null,
+    val targetAwbMode: Int? = null,
+) {
+    val canMatchLast: Boolean
+        get() = lastPhoto != null && capabilities.supportsManualSensor
+}
 
 data class CaptureTarget(val sequence: Int, val file: File)
 
@@ -90,6 +99,12 @@ class CaptureViewModel(
             controller.backAvailable.collect { v -> _state.update { it.copy(backAvailable = v) } }
         }
         viewModelScope.launch {
+            controller.capabilities.collect { c -> _state.update { it.copy(capabilities = c) } }
+        }
+        viewModelScope.launch {
+            controller.manualMode.collect { m -> _state.update { it.copy(manualMode = m) } }
+        }
+        viewModelScope.launch {
             photos.observeLatest(projectId).collect { p -> _state.update { it.copy(lastPhoto = p) } }
         }
     }
@@ -113,7 +128,50 @@ class CaptureViewModel(
         }
         if (next == CameraSelector.LENS_FACING_FRONT && !state.value.frontAvailable) return
         if (next == CameraSelector.LENS_FACING_BACK && !state.value.backAvailable) return
+        _state.update { it.copy(targetIso = null, targetExposureNs = null, targetAwbMode = null) }
         controller.setFacing(next)
+    }
+
+    fun setManualMode(enabled: Boolean) {
+        if (enabled && !state.value.manualMode) {
+            val r = state.value.readout
+            _state.update {
+                it.copy(
+                    targetIso = it.targetIso ?: r.iso,
+                    targetExposureNs = it.targetExposureNs ?: r.exposureTimeNs,
+                )
+            }
+            state.value.targetIso?.let { controller.setIso(it) }
+            state.value.targetExposureNs?.let { controller.setExposureTimeNs(it) }
+        }
+        controller.setManualMode(enabled)
+    }
+
+    fun setIso(iso: Int) {
+        _state.update { it.copy(targetIso = iso) }
+        controller.setIso(iso)
+    }
+
+    fun setExposureNs(ns: Long) {
+        _state.update { it.copy(targetExposureNs = ns) }
+        controller.setExposureTimeNs(ns)
+    }
+
+    fun setAwbMode(mode: Int) {
+        _state.update { it.copy(targetAwbMode = mode) }
+        controller.setAwbMode(mode)
+    }
+
+    fun matchLast() {
+        val cs = state.value.lastPhoto?.cameraSettings ?: return
+        controller.applyTemplate(cs)
+        _state.update {
+            it.copy(
+                targetIso = cs.iso ?: it.targetIso,
+                targetExposureNs = cs.exposureTimeNs ?: it.targetExposureNs,
+                targetAwbMode = ChronoCameraController.awbModeFromName(cs.whiteBalanceMode) ?: it.targetAwbMode,
+            )
+        }
     }
 
     fun capture() {

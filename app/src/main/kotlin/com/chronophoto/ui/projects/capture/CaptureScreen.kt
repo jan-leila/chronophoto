@@ -10,23 +10,32 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -49,10 +58,16 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import com.chronophoto.data.capture.CameraCapabilities
+import com.chronophoto.data.capture.ChronoCameraController
 import com.chronophoto.data.capture.LiveCameraReadout
 import com.chronophoto.data.db.entity.Photo
 import com.chronophoto.ui.photo.PhotoFormat
 import java.io.File
+import kotlin.math.log2
+import kotlin.math.pow
+import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -144,6 +159,11 @@ fun CaptureScreen(
                     onCapture = vm::capture,
                     onBindCamera = vm::bindCamera,
                     onUnbindCamera = vm::unbindCamera,
+                    onSetManualMode = vm::setManualMode,
+                    onSetIso = vm::setIso,
+                    onSetExposureNs = vm::setExposureNs,
+                    onSetAwbMode = vm::setAwbMode,
+                    onMatchLast = vm::matchLast,
                 )
             }
         }
@@ -173,6 +193,11 @@ private fun CameraSurface(
     onCapture: () -> Unit,
     onBindCamera: (androidx.lifecycle.LifecycleOwner, PreviewView) -> Unit,
     onUnbindCamera: () -> Unit,
+    onSetManualMode: (Boolean) -> Unit,
+    onSetIso: (Int) -> Unit,
+    onSetExposureNs: (Long) -> Unit,
+    onSetAwbMode: (Int) -> Unit,
+    onMatchLast: () -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -231,15 +256,20 @@ private fun CameraSurface(
                 .padding(bottom = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            if (state.lastPhoto != null) {
-                GhostOpacitySlider(
-                    opacity = ghostOpacity,
-                    onChange = { ghostOpacity = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp, vertical = 8.dp),
-                )
-            }
+            ControlPanel(
+                state = state,
+                ghostOpacity = ghostOpacity,
+                onGhostOpacityChange = { ghostOpacity = it },
+                onSetManualMode = onSetManualMode,
+                onSetIso = onSetIso,
+                onSetExposureNs = onSetExposureNs,
+                onSetAwbMode = onSetAwbMode,
+                onMatchLast = onMatchLast,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            Spacer(Modifier.height(8.dp))
             FloatingActionButton(
                 onClick = onCapture,
                 shape = CircleShape,
@@ -251,28 +281,187 @@ private fun CameraSurface(
 }
 
 @Composable
-private fun GhostOpacitySlider(
-    opacity: Float,
-    onChange: (Float) -> Unit,
+private fun ControlPanel(
+    state: CaptureUiState,
+    ghostOpacity: Float,
+    onGhostOpacityChange: (Float) -> Unit,
+    onSetManualMode: (Boolean) -> Unit,
+    onSetIso: (Int) -> Unit,
+    onSetExposureNs: (Long) -> Unit,
+    onSetAwbMode: (Int) -> Unit,
+    onMatchLast: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val showAny = state.lastPhoto != null || state.capabilities.supportsManualSensor
+    if (!showAny) return
+
     Box(
         modifier = modifier
-            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
-            .padding(horizontal = 12.dp, vertical = 4.dp),
+            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
-        Column {
-            Text(
-                text = "ghost · ${(opacity * 100).toInt()}%",
-                color = Color.White,
-                style = MaterialTheme.typography.labelSmall,
-            )
-            Slider(
-                value = opacity,
-                onValueChange = onChange,
-                valueRange = 0f..1f,
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (state.lastPhoto != null) {
+                LabeledSlider(
+                    label = "ghost · ${(ghostOpacity * 100).roundToInt()}%",
+                    value = ghostOpacity,
+                    onValueChange = onGhostOpacityChange,
+                    valueRange = 0f..1f,
+                )
+            }
+            if (state.capabilities.supportsManualSensor) {
+                ManualModeRow(
+                    manualMode = state.manualMode,
+                    canMatchLast = state.canMatchLast,
+                    onSetManualMode = onSetManualMode,
+                    onMatchLast = onMatchLast,
+                )
+                if (state.manualMode) {
+                    IsoSlider(
+                        target = state.targetIso,
+                        range = state.capabilities.isoRange,
+                        readoutIso = state.readout.iso,
+                        onChange = onSetIso,
+                    )
+                    ExposureSlider(
+                        target = state.targetExposureNs,
+                        range = state.capabilities.exposureNsRange,
+                        readoutNs = state.readout.exposureTimeNs,
+                        onChange = onSetExposureNs,
+                    )
+                    AwbChips(
+                        selected = state.targetAwbMode,
+                        supported = state.capabilities.supportedAwbModes,
+                        onSelect = onSetAwbMode,
+                    )
+                }
+            } else if (state.lastPhoto != null) {
+                Text(
+                    text = "Manual sensor control isn't supported on this camera.",
+                    color = Color.White.copy(alpha = 0.7f),
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManualModeRow(
+    manualMode: Boolean,
+    canMatchLast: Boolean,
+    onSetManualMode: (Boolean) -> Unit,
+    onMatchLast: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = if (manualMode) "Manual" else "Auto",
+            color = Color.White,
+            style = MaterialTheme.typography.labelLarge,
+        )
+        Spacer(Modifier.width(8.dp))
+        Switch(
+            checked = manualMode,
+            onCheckedChange = onSetManualMode,
+        )
+        Spacer(Modifier.weight(1f))
+        if (canMatchLast) {
+            OutlinedButton(onClick = onMatchLast) { Text("Match last") }
+        }
+    }
+}
+
+@Composable
+private fun IsoSlider(
+    target: Int?,
+    range: IntRange?,
+    readoutIso: Int?,
+    onChange: (Int) -> Unit,
+) {
+    val current = target ?: readoutIso ?: range?.first ?: 100
+    val min = range?.first ?: 50
+    val max = range?.last ?: 6400
+    val logMin = log2(min.toFloat())
+    val logMax = log2(max.toFloat())
+    val logVal = log2(current.toFloat()).coerceIn(logMin, logMax)
+    LabeledSlider(
+        label = "ISO $current",
+        value = logVal,
+        onValueChange = { v ->
+            val next = 2f.pow(v).roundToInt().coerceIn(min, max)
+            if (next != current) onChange(next)
+        },
+        valueRange = logMin..logMax,
+    )
+}
+
+@Composable
+private fun ExposureSlider(
+    target: Long?,
+    range: LongRange?,
+    readoutNs: Long?,
+    onChange: (Long) -> Unit,
+) {
+    val current = target ?: readoutNs ?: range?.first ?: 4_000_000L
+    val min = range?.first ?: 125_000L
+    val max = range?.last ?: 1_000_000_000L
+    val logMin = log2(min.toFloat())
+    val logMax = log2(max.toFloat())
+    val logVal = log2(current.toFloat()).coerceIn(logMin, logMax)
+    LabeledSlider(
+        label = "exposure · ${PhotoFormat.exposure(current)}",
+        value = logVal,
+        onValueChange = { v ->
+            val next = 2f.pow(v).toDouble().roundToLong().coerceIn(min, max)
+            if (next != current) onChange(next)
+        },
+        valueRange = logMin..logMax,
+    )
+}
+
+@Composable
+private fun AwbChips(
+    selected: Int?,
+    supported: List<Int>,
+    onSelect: (Int) -> Unit,
+) {
+    if (supported.isEmpty()) return
+    val scrollState = rememberScrollState()
+    Row(
+        modifier = Modifier.horizontalScroll(scrollState),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        supported.forEach { mode ->
+            FilterChip(
+                selected = mode == selected,
+                onClick = { onSelect(mode) },
+                label = { Text(ChronoCameraController.awbName(mode)) },
             )
         }
+    }
+}
+
+@Composable
+private fun LabeledSlider(
+    label: String,
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    valueRange: ClosedFloatingPointRange<Float>,
+) {
+    Column {
+        Text(
+            text = label,
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+        )
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = valueRange,
+        )
     }
 }
 
