@@ -40,6 +40,7 @@
           export ANDROID_HOME="${androidSdkPath}"
           export ANDROID_SDK_ROOT="${androidSdkPath}"
           export JAVA_HOME="${pkgs.jdk17.home}"
+          export GRADLE_OPTS="-Dorg.gradle.project.android.aapt2FromMavenOverride=${androidSdkPath}/build-tools/34.0.0/aapt2"
         '';
 
         ensureGradlew = ''
