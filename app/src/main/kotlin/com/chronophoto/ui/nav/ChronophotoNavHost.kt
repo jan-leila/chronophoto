@@ -7,6 +7,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.chronophoto.ui.projects.capture.CaptureScreen
 import com.chronophoto.ui.projects.create.NewProjectScreen
 import com.chronophoto.ui.projects.detail.ProjectDetailScreen
 import com.chronophoto.ui.projects.list.ProjectListScreen
@@ -36,7 +37,18 @@ fun ChronophotoNavHost(
             arguments = listOf(navArgument(Routes.PROJECT_DETAIL_ARG) { type = NavType.LongType }),
         ) { entry ->
             val id = entry.arguments?.getLong(Routes.PROJECT_DETAIL_ARG) ?: return@composable
-            ProjectDetailScreen(projectId = id, onBack = { navController.popBackStack() })
+            ProjectDetailScreen(
+                projectId = id,
+                onBack = { navController.popBackStack() },
+                onCapture = { navController.navigate(Routes.capture(id)) },
+            )
+        }
+        composable(
+            route = Routes.CAPTURE_ROUTE,
+            arguments = listOf(navArgument(Routes.CAPTURE_ARG) { type = NavType.LongType }),
+        ) { entry ->
+            val id = entry.arguments?.getLong(Routes.CAPTURE_ARG) ?: return@composable
+            CaptureScreen(projectId = id, onBack = { navController.popBackStack() })
         }
     }
 }

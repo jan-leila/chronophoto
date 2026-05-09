@@ -9,4 +9,8 @@ object Routes {
     const val PROJECT_DETAIL_ROUTE = "$PROJECT_DETAIL_BASE/{$PROJECT_DETAIL_ARG}"
 
     fun projectDetail(id: Long) = "$PROJECT_DETAIL_BASE/$id"
+
+    const val CAPTURE_ARG = "projectId"
+    const val CAPTURE_ROUTE = "$PROJECT_DETAIL_BASE/{$CAPTURE_ARG}/capture"
+    fun capture(projectId: Long) = "$PROJECT_DETAIL_BASE/$projectId/capture"
 }

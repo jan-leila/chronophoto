@@ -3,17 +3,25 @@ package com.chronophoto.ui.projects.detail
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -30,11 +38,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
+import com.chronophoto.data.db.entity.Photo
 import com.chronophoto.data.db.entity.Project
+import java.io.File
 import java.text.DateFormat
 import java.util.Date
 
@@ -43,6 +55,7 @@ import java.util.Date
 fun ProjectDetailScreen(
     projectId: Long,
     onBack: () -> Unit,
+    onCapture: () -> Unit,
 ) {
     val context = LocalContext.current
     val vm: ProjectDetailViewModel = viewModel(
@@ -74,6 +87,15 @@ fun ProjectDetailScreen(
                 },
             )
         },
+        floatingActionButton = {
+            if (state.project != null && state.project?.archivedAt == null) {
+                ExtendedFloatingActionButton(
+                    text = { Text("Take photo") },
+                    icon = { Icon(Icons.Filled.PhotoCamera, contentDescription = null) },
+                    onClick = onCapture,
+                )
+            }
+        },
     ) { padding ->
         val project = state.project
         if (project == null) {
@@ -82,39 +104,70 @@ fun ProjectDetailScreen(
             }
             return@Scaffold
         }
+        Body(padding = padding, project = project, photos = state.photos)
+    }
+}
 
-        Column(
-            modifier = Modifier
-                .padding(padding)
-                .padding(16.dp)
-                .fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            project.description?.let { Text(it) }
-            Text(
-                text = buildString {
-                    append("Created ")
-                    append(DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(project.createdAt)))
-                    if (project.archivedAt != null) {
-                        append(" • archived ")
-                        append(DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(project.archivedAt)))
+@Composable
+private fun Body(padding: PaddingValues, project: Project, photos: List<Photo>) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(3),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            top = padding.calculateTopPadding() + 16.dp,
+            bottom = padding.calculateBottomPadding() + 96.dp,
+            start = 16.dp,
+            end = 16.dp,
+        ),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Header(project = project, photoCount = photos.size)
+        }
+        if (photos.isEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("Photos", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = "No photos yet — tap the camera button to capture the first one.",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
                     }
-                },
-                style = MaterialTheme.typography.bodySmall,
-            )
-
-            MetadataCard(project)
-
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Photos", fontWeight = FontWeight.SemiBold)
-                    Text(
-                        text = "No photos yet — capture flow comes in Phase 1 step 3.",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
                 }
             }
+        } else {
+            items(photos, key = { it.id }) { photo ->
+                AsyncImage(
+                    model = File(photo.filePath),
+                    contentDescription = "Photo ${photo.sequence}",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun Header(project: Project, photoCount: Int) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        project.description?.let { Text(it) }
+        Text(
+            text = buildString {
+                append("Created ")
+                append(DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(project.createdAt)))
+                if (project.archivedAt != null) {
+                    append(" • archived ")
+                    append(DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(project.archivedAt)))
+                }
+                append(" • ")
+                append(if (photoCount == 1) "1 photo" else "$photoCount photos")
+            },
+            style = MaterialTheme.typography.bodySmall,
+        )
+        MetadataCard(project)
     }
 }
 
