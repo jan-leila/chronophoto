@@ -1,5 +1,9 @@
 package com.chronophoto.ui.projects.detail
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -56,6 +60,7 @@ fun ProjectDetailScreen(
     projectId: Long,
     onBack: () -> Unit,
     onCapture: () -> Unit,
+    onOpenPhoto: (Long) -> Unit,
 ) {
     val context = LocalContext.current
     val vm: ProjectDetailViewModel = viewModel(
@@ -66,6 +71,12 @@ fun ProjectDetailScreen(
 
     LaunchedEffect(state.deleted) {
         if (state.deleted) onBack()
+    }
+
+    val pickPhotoLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        if (uri != null) vm.importPhoto(uri)
     }
 
     Scaffold(
@@ -83,6 +94,11 @@ fun ProjectDetailScreen(
                         onArchive = vm::archive,
                         onUnarchive = vm::unarchive,
                         onDelete = vm::delete,
+                        onImport = {
+                            pickPhotoLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                            )
+                        },
                     )
                 },
             )
@@ -104,12 +120,28 @@ fun ProjectDetailScreen(
             }
             return@Scaffold
         }
-        Body(padding = padding, project = project, photos = state.photos)
+        Body(
+            padding = padding,
+            project = project,
+            photos = state.photos,
+            importing = state.importing,
+            importError = state.importError,
+            onClearError = vm::clearImportError,
+            onOpenPhoto = onOpenPhoto,
+        )
     }
 }
 
 @Composable
-private fun Body(padding: PaddingValues, project: Project, photos: List<Photo>) {
+private fun Body(
+    padding: PaddingValues,
+    project: Project,
+    photos: List<Photo>,
+    importing: Boolean,
+    importError: String?,
+    onClearError: () -> Unit,
+    onOpenPhoto: (Long) -> Unit,
+) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(3),
         modifier = Modifier.fillMaxSize(),
@@ -123,7 +155,7 @@ private fun Body(padding: PaddingValues, project: Project, photos: List<Photo>) 
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item(span = { GridItemSpan(maxLineSpan) }) {
-            Header(project = project, photoCount = photos.size)
+            Header(project = project, photoCount = photos.size, importing = importing)
         }
         if (photos.isEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }) {
@@ -131,7 +163,7 @@ private fun Body(padding: PaddingValues, project: Project, photos: List<Photo>) 
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text("Photos", fontWeight = FontWeight.SemiBold)
                         Text(
-                            text = "No photos yet — tap the camera button to capture the first one.",
+                            text = "No photos yet — tap the camera button or import one from your gallery.",
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
@@ -141,17 +173,29 @@ private fun Body(padding: PaddingValues, project: Project, photos: List<Photo>) 
             items(photos, key = { it.id }) { photo ->
                 AsyncImage(
                     model = File(photo.filePath),
-                    contentDescription = "Photo ${photo.sequence}",
+                    contentDescription = "Photo ${photo.sequence + 1}",
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .clickable { onOpenPhoto(photo.id) },
                 )
             }
         }
     }
+
+    if (importError != null) {
+        AlertDialog(
+            onDismissRequest = onClearError,
+            title = { Text("Import failed") },
+            text = { Text(importError) },
+            confirmButton = { TextButton(onClick = onClearError) { Text("OK") } },
+        )
+    }
 }
 
 @Composable
-private fun Header(project: Project, photoCount: Int) {
+private fun Header(project: Project, photoCount: Int, importing: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         project.description?.let { Text(it) }
         Text(
@@ -164,6 +208,7 @@ private fun Header(project: Project, photoCount: Int) {
                 }
                 append(" • ")
                 append(if (photoCount == 1) "1 photo" else "$photoCount photos")
+                if (importing) append(" • importing…")
             },
             style = MaterialTheme.typography.bodySmall,
         )
@@ -198,6 +243,7 @@ private fun OverflowMenu(
     onArchive: () -> Unit,
     onUnarchive: () -> Unit,
     onDelete: () -> Unit,
+    onImport: () -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -205,6 +251,10 @@ private fun OverflowMenu(
         Icon(Icons.Filled.MoreVert, contentDescription = "More")
     }
     DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        DropdownMenuItem(
+            text = { Text("Import photo") },
+            onClick = { onImport(); open = false },
+        )
         if (archived) {
             DropdownMenuItem(
                 text = { Text("Unarchive") },

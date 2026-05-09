@@ -14,6 +14,8 @@ class ProjectRepository(private val projectDao: ProjectDao) {
 
     fun observeById(id: Long): Flow<Project?> = projectDao.observeById(id)
 
+    suspend fun getById(id: Long): Project? = projectDao.getById(id)
+
     suspend fun create(
         name: String,
         description: String?,

@@ -4,21 +4,20 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageCapture
-import androidx.camera.core.ImageCaptureException
-import androidx.camera.core.Preview
-import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -27,6 +26,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -36,22 +36,23 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.google.common.util.concurrent.ListenableFuture
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
-import java.util.concurrent.Executor
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
+import coil.compose.AsyncImage
+import com.chronophoto.data.capture.LiveCameraReadout
+import com.chronophoto.data.db.entity.Photo
+import com.chronophoto.ui.photo.PhotoFormat
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,18 +67,33 @@ fun CaptureScreen(
     )
     val state by vm.state.collectAsState()
 
-    var hasPermission by remember {
+    var hasCamera by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
                 PackageManager.PERMISSION_GRANTED,
         )
     }
-    val launcher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted -> hasPermission = granted }
+    var hasLocation by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                PackageManager.PERMISSION_GRANTED,
+        )
+    }
 
-    LaunchedEffect(Unit) {
-        if (!hasPermission) launcher.launch(Manifest.permission.CAMERA)
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { result ->
+        result[Manifest.permission.CAMERA]?.let { hasCamera = it }
+        result[Manifest.permission.ACCESS_FINE_LOCATION]?.let { hasLocation = it }
+    }
+
+    LaunchedEffect(state.projectLoaded, state.storeGps) {
+        if (!state.projectLoaded) return@LaunchedEffect
+        val toRequest = buildList {
+            if (!hasCamera) add(Manifest.permission.CAMERA)
+            if (state.storeGps && !hasLocation) add(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+        if (toRequest.isNotEmpty()) launcher.launch(toRequest.toTypedArray())
     }
 
     LaunchedEffect(state.saved) {
@@ -93,26 +109,49 @@ fun CaptureScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
+                actions = {
+                    if (state.frontAvailable && state.backAvailable) {
+                        IconButton(onClick = vm::toggleFacing) {
+                            Icon(
+                                Icons.Filled.Cameraswitch,
+                                contentDescription = "Switch camera",
+                            )
+                        }
+                    }
+                },
             )
         },
     ) { padding ->
-        if (!hasPermission) {
-            PermissionRationale(padding) { launcher.launch(Manifest.permission.CAMERA) }
-        } else {
-            CameraUi(
-                padding = padding,
-                saving = state.saving,
-                error = state.error,
-                prepareCapture = { vm.prepareCapture() },
-                onCaptureSuccess = vm::recordCapture,
-                onCaptureError = vm::onCaptureError,
-            )
+        when {
+            !state.projectLoaded -> {
+                Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                    Text("Loading…")
+                }
+            }
+            !hasCamera -> {
+                PermissionRationale(
+                    padding = padding,
+                    text = "Camera permission is needed to capture photos.",
+                ) {
+                    launcher.launch(arrayOf(Manifest.permission.CAMERA))
+                }
+            }
+            else -> {
+                CameraSurface(
+                    padding = padding,
+                    state = state,
+                    locationGranted = hasLocation,
+                    onCapture = vm::capture,
+                    onBindCamera = vm::bindCamera,
+                    onUnbindCamera = vm::unbindCamera,
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun PermissionRationale(padding: PaddingValues, onRequest: () -> Unit) {
+private fun PermissionRationale(padding: PaddingValues, text: String, onRequest: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -121,107 +160,175 @@ private fun PermissionRationale(padding: PaddingValues, onRequest: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(
-            text = "Camera permission is needed to capture photos for this project.",
-            style = MaterialTheme.typography.bodyLarge,
-        )
+        Text(text = text, style = MaterialTheme.typography.bodyLarge)
         Button(onClick = onRequest) { Text("Grant permission") }
     }
 }
 
 @Composable
-private fun CameraUi(
+private fun CameraSurface(
     padding: PaddingValues,
-    saving: Boolean,
-    error: String?,
-    prepareCapture: suspend () -> CaptureTarget,
-    onCaptureSuccess: (CaptureTarget) -> Unit,
-    onCaptureError: (String?) -> Unit,
+    state: CaptureUiState,
+    locationGranted: Boolean,
+    onCapture: () -> Unit,
+    onBindCamera: (androidx.lifecycle.LifecycleOwner, PreviewView) -> Unit,
+    onUnbindCamera: () -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val previewView = remember { PreviewView(context) }
-    var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
-    val executor = remember { ContextCompat.getMainExecutor(context) }
-    val scope = rememberCoroutineScope()
+    var ghostOpacity by remember { mutableStateOf(0.3f) }
 
-    LaunchedEffect(Unit) {
-        runCatching {
-            val provider = ProcessCameraProvider.getInstance(context).await(executor)
-            val preview = Preview.Builder().build().also {
-                it.surfaceProvider = previewView.surfaceProvider
-            }
-            val capture = ImageCapture.Builder().build()
-            provider.unbindAll()
-            provider.bindToLifecycle(
-                lifecycleOwner,
-                CameraSelector.DEFAULT_BACK_CAMERA,
-                preview,
-                capture,
-            )
-            imageCapture = capture
-        }.onFailure { onCaptureError(it.message) }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            runCatching {
-                ProcessCameraProvider.getInstance(context).get().unbindAll()
-            }
-        }
-    }
+    LaunchedEffect(previewView) { onBindCamera(lifecycleOwner, previewView) }
+    DisposableEffect(Unit) { onDispose { onUnbindCamera() } }
 
     Box(modifier = Modifier.fillMaxSize().padding(padding)) {
         AndroidView(
             factory = { previewView },
             modifier = Modifier.fillMaxSize(),
         )
-        if (error != null) {
-            Text(
-                text = error,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.align(Alignment.TopCenter).padding(16.dp),
+
+        state.lastPhoto?.let { last ->
+            AsyncImage(
+                model = File(last.filePath),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(ghostOpacity),
             )
         }
-        FloatingActionButton(
-            onClick = {
-                val ic = imageCapture ?: return@FloatingActionButton
-                if (saving) return@FloatingActionButton
-                scope.launch {
-                    val target = prepareCapture()
-                    val opts = ImageCapture.OutputFileOptions.Builder(target.file).build()
-                    ic.takePicture(
-                        opts,
-                        executor,
-                        object : ImageCapture.OnImageSavedCallback {
-                            override fun onImageSaved(results: ImageCapture.OutputFileResults) {
-                                onCaptureSuccess(target)
-                            }
 
-                            override fun onError(exc: ImageCaptureException) {
-                                onCaptureError(exc.message)
-                            }
-                        },
-                    )
-                }
-            },
-            shape = CircleShape,
+        MetadataStrip(
+            readout = state.readout,
+            ambientLux = state.ambientLux,
+            lastPhoto = state.lastPhoto,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .padding(12.dp),
+        )
+
+        if (state.error != null) {
+            Text(
+                text = state.error,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.align(Alignment.Center).padding(16.dp),
+            )
+        }
+        if (state.storeGps && !locationGranted) {
+            Text(
+                text = "Location permission denied — GPS won't be saved.",
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.align(Alignment.Center).padding(16.dp),
+            )
+        }
+
+        Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 32.dp),
+                .fillMaxWidth()
+                .padding(bottom = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Icon(Icons.Filled.PhotoCamera, contentDescription = "Capture")
+            if (state.lastPhoto != null) {
+                GhostOpacitySlider(
+                    opacity = ghostOpacity,
+                    onChange = { ghostOpacity = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 8.dp),
+                )
+            }
+            FloatingActionButton(
+                onClick = onCapture,
+                shape = CircleShape,
+            ) {
+                Icon(Icons.Filled.PhotoCamera, contentDescription = "Capture")
+            }
         }
     }
 }
 
-private suspend fun <T> ListenableFuture<T>.await(executor: Executor): T =
-    suspendCancellableCoroutine { cont ->
-        addListener({
-            try {
-                cont.resume(get())
-            } catch (t: Throwable) {
-                cont.resumeWithException(t)
-            }
-        }, executor)
+@Composable
+private fun GhostOpacitySlider(
+    opacity: Float,
+    onChange: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+    ) {
+        Column {
+            Text(
+                text = "ghost · ${(opacity * 100).toInt()}%",
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+            )
+            Slider(
+                value = opacity,
+                onValueChange = onChange,
+                valueRange = 0f..1f,
+            )
+        }
     }
+}
+
+@Composable
+private fun MetadataStrip(
+    readout: LiveCameraReadout,
+    ambientLux: Float?,
+    lastPhoto: Photo?,
+    modifier: Modifier = Modifier,
+) {
+    val live = formatReadoutLine(readout, ambientLux)
+    val previous = lastPhoto?.let { formatPhotoLine(it) }
+
+    Box(
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Column {
+            Text(
+                text = "live · $live",
+                color = Color.White,
+                style = MaterialTheme.typography.labelMedium,
+            )
+            if (previous != null) {
+                Text(
+                    text = "last · $previous",
+                    color = Color.White.copy(alpha = 0.7f),
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+        }
+    }
+}
+
+private fun formatReadoutLine(r: LiveCameraReadout, lux: Float?): String {
+    val parts = buildList {
+        r.iso?.let { add("ISO $it") }
+        if (r.exposureTimeNs != null) add(PhotoFormat.exposure(r.exposureTimeNs))
+        r.focalLengthMm?.let { add(PhotoFormat.focalLength(it)) }
+        r.apertureFNumber?.let { add(PhotoFormat.aperture(it)) }
+        r.whiteBalanceMode?.let { add("AWB $it") }
+        lux?.let { add(PhotoFormat.lux(it)) }
+    }
+    return if (parts.isEmpty()) "—" else parts.joinToString(" · ")
+}
+
+private fun formatPhotoLine(photo: Photo): String {
+    val cs = photo.cameraSettings
+    val parts = buildList {
+        cs.iso?.let { add("ISO $it") }
+        cs.exposureTimeNs?.let { add(PhotoFormat.exposure(it)) }
+        cs.focalLengthMm?.let { add(PhotoFormat.focalLength(it)) }
+        cs.apertureFNumber?.let { add(PhotoFormat.aperture(it)) }
+        cs.whiteBalanceMode?.let { add("AWB $it") }
+        photo.ambientLux?.let { add(PhotoFormat.lux(it)) }
+    }
+    return if (parts.isEmpty()) "no metadata" else parts.joinToString(" · ")
+}

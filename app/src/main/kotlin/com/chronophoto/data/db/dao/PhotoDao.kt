@@ -22,6 +22,15 @@ interface PhotoDao {
     @Query("SELECT * FROM photos WHERE id = :id")
     suspend fun getById(id: Long): Photo?
 
+    @Query("SELECT * FROM photos WHERE id = :id")
+    fun observeById(id: Long): Flow<Photo?>
+
+    @Query("SELECT * FROM photos WHERE projectId = :projectId AND sequence < :sequence ORDER BY sequence DESC LIMIT 1")
+    suspend fun getPrevious(projectId: Long, sequence: Int): Photo?
+
+    @Query("SELECT * FROM photos WHERE projectId = :projectId AND sequence < :sequence ORDER BY sequence DESC LIMIT 1")
+    fun observePrevious(projectId: Long, sequence: Int): Flow<Photo?>
+
     @Query("SELECT COUNT(*) FROM photos WHERE projectId = :projectId")
     suspend fun countForProject(projectId: Long): Int
 
