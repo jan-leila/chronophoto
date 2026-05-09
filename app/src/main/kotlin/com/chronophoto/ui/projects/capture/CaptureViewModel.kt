@@ -1,6 +1,7 @@
 package com.chronophoto.ui.projects.capture
 
 import android.content.Context
+import android.location.Location
 import androidx.camera.core.CameraSelector
 import androidx.camera.view.PreviewView
 import androidx.lifecycle.LifecycleOwner
@@ -32,6 +33,7 @@ data class CaptureUiState(
     val error: String? = null,
     val readout: LiveCameraReadout = LiveCameraReadout(),
     val ambientLux: Float? = null,
+    val liveLocation: Location? = null,
     val lastPhoto: Photo? = null,
     val lensFacing: Int = CameraSelector.LENS_FACING_BACK,
     val frontAvailable: Boolean = false,
@@ -82,6 +84,11 @@ class CaptureViewModel(
             launch {
                 coll.luxFlow.collect { lux ->
                     _state.update { it.copy(ambientLux = lux) }
+                }
+            }
+            launch {
+                coll.locationFlow.collect { loc ->
+                    _state.update { it.copy(liveLocation = loc) }
                 }
             }
         }

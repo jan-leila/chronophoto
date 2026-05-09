@@ -2,6 +2,7 @@ package com.chronophoto.ui.projects.capture
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.location.Location
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.view.PreviewView
@@ -227,6 +228,7 @@ private fun CameraSurface(
         MetadataStrip(
             readout = state.readout,
             ambientLux = state.ambientLux,
+            liveLocation = state.liveLocation,
             lastPhoto = state.lastPhoto,
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -469,11 +471,13 @@ private fun LabeledSlider(
 private fun MetadataStrip(
     readout: LiveCameraReadout,
     ambientLux: Float?,
+    liveLocation: Location?,
     lastPhoto: Photo?,
     modifier: Modifier = Modifier,
 ) {
     val live = formatReadoutLine(readout, ambientLux)
     val previous = lastPhoto?.let { formatPhotoLine(it) }
+    val delta = lastPhoto?.let { formatDeltaLine(ambientLux, liveLocation, it) }
 
     Box(
         modifier = modifier
@@ -490,6 +494,13 @@ private fun MetadataStrip(
                 Text(
                     text = "last · $previous",
                     color = Color.White.copy(alpha = 0.7f),
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+            if (delta != null) {
+                Text(
+                    text = "Δ · $delta",
+                    color = Color(0xFFFFC107),
                     style = MaterialTheme.typography.labelSmall,
                 )
             }
@@ -520,4 +531,33 @@ private fun formatPhotoLine(photo: Photo): String {
         photo.ambientLux?.let { add(PhotoFormat.lux(it)) }
     }
     return if (parts.isEmpty()) "no metadata" else parts.joinToString(" · ")
+}
+
+private fun formatDeltaLine(
+    liveLux: Float?,
+    liveLocation: Location?,
+    last: Photo,
+): String? {
+    val luxDelta = PhotoFormat.luxDiff(liveLux, last.ambientLux)?.let {
+        // PhotoFormat.luxDiff returns "+10.5 lux from previous"; trim suffix
+        it.removeSuffix(" from previous")
+    }
+    val gpsDelta = formatGpsLiveDelta(liveLocation, last)
+    val parts = listOfNotNull(luxDelta, gpsDelta)
+    return if (parts.isEmpty()) null else parts.joinToString(" · ")
+}
+
+private fun formatGpsLiveDelta(live: Location?, last: Photo): String? {
+    val nowLat = live?.latitude ?: return null
+    val nowLng = live.longitude
+    val prevLat = last.gpsLocation.latitude ?: return null
+    val prevLng = last.gpsLocation.longitude ?: return null
+    val out = FloatArray(1)
+    Location.distanceBetween(prevLat, prevLng, nowLat, nowLng, out)
+    val meters = out[0]
+    return when {
+        meters < 1f -> null
+        meters < 1_000f -> "%.0f m from last".format(meters)
+        else -> "%.2f km from last".format(meters / 1_000f)
+    }
 }
