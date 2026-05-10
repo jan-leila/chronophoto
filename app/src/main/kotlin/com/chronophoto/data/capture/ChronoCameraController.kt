@@ -76,13 +76,24 @@ class ChronoCameraController(private val context: Context) {
     private var preview: PreviewView? = null
     private var manual = ManualSettings()
 
-    suspend fun bind(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {
+    suspend fun bind(
+        lifecycleOwner: LifecycleOwner,
+        previewView: PreviewView,
+        initialFacing: Int = CameraSelector.LENS_FACING_BACK,
+    ) {
         this.owner = lifecycleOwner
         this.preview = previewView
+        _facing.value = initialFacing
         val p = ProcessCameraProvider.getInstance(context).await(mainExecutor)
         provider = p
         _frontAvailable.value = p.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)
         _backAvailable.value = p.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)
+        // If the requested initial facing isn't available, fall back.
+        if (_facing.value == CameraSelector.LENS_FACING_FRONT && !_frontAvailable.value) {
+            _facing.value = CameraSelector.LENS_FACING_BACK
+        } else if (_facing.value == CameraSelector.LENS_FACING_BACK && !_backAvailable.value) {
+            _facing.value = CameraSelector.LENS_FACING_FRONT
+        }
         rebind()
     }
 

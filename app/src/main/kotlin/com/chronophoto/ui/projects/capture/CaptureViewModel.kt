@@ -1,6 +1,7 @@
 package com.chronophoto.ui.projects.capture
 
 import android.content.Context
+import android.hardware.camera2.CameraMetadata
 import android.location.Location
 import androidx.camera.core.CameraSelector
 import androidx.camera.view.PreviewView
@@ -12,6 +13,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.chronophoto.data.capture.CameraCapabilities
 import com.chronophoto.data.capture.ChronoCameraController
 import com.chronophoto.data.capture.LiveCameraReadout
+import com.chronophoto.data.capture.MetadataBundle
 import com.chronophoto.data.capture.MetadataCollector
 import com.chronophoto.data.db.entity.Photo
 import com.chronophoto.data.repo.PhotoRepository
@@ -19,6 +21,7 @@ import com.chronophoto.data.repo.ProjectRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
@@ -43,10 +46,19 @@ data class CaptureUiState(
     val targetIso: Int? = null,
     val targetExposureNs: Long? = null,
     val targetAwbMode: Int? = null,
+    val initialLensFacing: Int = CameraSelector.LENS_FACING_BACK,
+    val pendingCapture: PendingCapture? = null,
 ) {
     val canMatchLast: Boolean
         get() = lastPhoto != null && capabilities.supportsManualSensor
 }
+
+data class PendingCapture(
+    val sequence: Int,
+    val file: File,
+    val capturedAt: Long,
+    val metadata: MetadataBundle,
+)
 
 data class CaptureTarget(val sequence: Int, val file: File)
 
@@ -66,12 +78,18 @@ class CaptureViewModel(
     init {
         viewModelScope.launch {
             val project = projects.getById(projectId) ?: return@launch
+            val latest = photos.getLatest(projectId)
+            val initialFacing = when (latest?.cameraSettings?.lensFacing) {
+                CameraMetadata.LENS_FACING_FRONT -> CameraSelector.LENS_FACING_FRONT
+                else -> CameraSelector.LENS_FACING_BACK
+            }
             _state.update {
                 it.copy(
                     projectLoaded = true,
                     storeAmbientBrightness = project.storeAmbientBrightness,
                     storeCameraSettings = project.storeCameraSettings,
                     storeGps = project.storeGps,
+                    initialLensFacing = initialFacing,
                 )
             }
             val coll = MetadataCollector(
@@ -118,7 +136,8 @@ class CaptureViewModel(
 
     fun bindCamera(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {
         viewModelScope.launch {
-            runCatching { controller.bind(lifecycleOwner, previewView) }
+            val s = state.first { it.projectLoaded }
+            runCatching { controller.bind(lifecycleOwner, previewView, s.initialLensFacing) }
                 .onFailure { e -> _state.update { it.copy(error = e.message ?: "Camera bind failed") } }
         }
     }
@@ -182,7 +201,7 @@ class CaptureViewModel(
     }
 
     fun capture() {
-        if (_state.value.saving) return
+        if (_state.value.saving || _state.value.pendingCapture != null) return
         _state.update { it.copy(saving = true, error = null) }
         viewModelScope.launch {
             runCatching {
@@ -190,16 +209,47 @@ class CaptureViewModel(
                 val file = photos.fileFor(projectId, seq)
                 controller.capture(file)
                 val metadata = collector?.snapshot(file, controller.facing.value) ?: error("Collector not ready")
-                photos.recordCapture(projectId, seq, file, metadata = metadata)
+                PendingCapture(seq, file, System.currentTimeMillis(), metadata)
             }
-                .onSuccess { _state.update { it.copy(saving = false, saved = true) } }
+                .onSuccess { pending ->
+                    _state.update { it.copy(saving = false, pendingCapture = pending) }
+                }
                 .onFailure { e ->
                     _state.update { it.copy(saving = false, error = e.message ?: "Capture failed") }
                 }
         }
     }
 
+    fun commitPending() {
+        val pending = _state.value.pendingCapture ?: return
+        if (_state.value.saving) return
+        _state.update { it.copy(saving = true, error = null) }
+        viewModelScope.launch {
+            runCatching {
+                photos.recordCapture(
+                    projectId = projectId,
+                    sequence = pending.sequence,
+                    file = pending.file,
+                    capturedAt = pending.capturedAt,
+                    metadata = pending.metadata,
+                )
+            }
+                .onSuccess { _state.update { it.copy(saving = false, saved = true, pendingCapture = null) } }
+                .onFailure { e ->
+                    _state.update { it.copy(saving = false, error = e.message ?: "Save failed") }
+                }
+        }
+    }
+
+    fun discardPending() {
+        val pending = _state.value.pendingCapture ?: return
+        runCatching { pending.file.delete() }
+        _state.update { it.copy(pendingCapture = null) }
+    }
+
     override fun onCleared() {
+        // Discard any orphan pending capture file
+        _state.value.pendingCapture?.let { runCatching { it.file.delete() } }
         controller.unbind()
         collector?.stop()
         super.onCleared()

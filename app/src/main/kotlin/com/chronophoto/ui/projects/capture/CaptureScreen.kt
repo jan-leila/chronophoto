@@ -5,6 +5,8 @@ import android.content.pm.PackageManager
 import android.location.Location
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.BackHandler
+import androidx.camera.core.CameraSelector
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +25,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Cameraswitch
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -51,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -165,6 +170,8 @@ fun CaptureScreen(
                     onSetExposureNs = vm::setExposureNs,
                     onSetAwbMode = vm::setAwbMode,
                     onMatchLast = vm::matchLast,
+                    onCommitPending = vm::commitPending,
+                    onDiscardPending = vm::discardPending,
                 )
             }
         }
@@ -199,14 +206,21 @@ private fun CameraSurface(
     onSetExposureNs: (Long) -> Unit,
     onSetAwbMode: (Int) -> Unit,
     onMatchLast: () -> Unit,
+    onCommitPending: () -> Unit,
+    onDiscardPending: () -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val previewView = remember { PreviewView(context) }
     var ghostOpacity by remember { mutableStateOf(0.3f) }
+    var controlsExpanded by remember { mutableStateOf(true) }
 
     LaunchedEffect(previewView) { onBindCamera(lifecycleOwner, previewView) }
     DisposableEffect(Unit) { onDispose { onUnbindCamera() } }
+
+    BackHandler(enabled = state.pendingCapture != null) {
+        onDiscardPending()
+    }
 
     Box(modifier = Modifier.fillMaxSize().padding(padding)) {
         AndroidView(
@@ -214,15 +228,19 @@ private fun CameraSurface(
             modifier = Modifier.fillMaxSize(),
         )
 
-        state.lastPhoto?.let { last ->
-            AsyncImage(
-                model = File(last.filePath),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .alpha(ghostOpacity),
-            )
+        if (state.pendingCapture == null) {
+            state.lastPhoto?.let { last ->
+                val mirror = state.lensFacing == CameraSelector.LENS_FACING_FRONT
+                AsyncImage(
+                    model = File(last.filePath),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .alpha(ghostOpacity)
+                        .graphicsLayer { scaleX = if (mirror) -1f else 1f },
+                )
+            }
         }
 
         MetadataStrip(
@@ -251,32 +269,113 @@ private fun CameraSurface(
             )
         }
 
-        Column(
+        if (state.pendingCapture == null) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(bottom = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                if (controlsExpanded) {
+                    ControlPanel(
+                        state = state,
+                        ghostOpacity = ghostOpacity,
+                        onGhostOpacityChange = { ghostOpacity = it },
+                        onSetManualMode = onSetManualMode,
+                        onSetIso = onSetIso,
+                        onSetExposureNs = onSetExposureNs,
+                        onSetAwbMode = onSetAwbMode,
+                        onMatchLast = onMatchLast,
+                        onCollapse = { controlsExpanded = false },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                } else {
+                    IconButton(
+                        onClick = { controlsExpanded = true },
+                        modifier = Modifier
+                            .background(Color.Black.copy(alpha = 0.55f), CircleShape),
+                    ) {
+                        Icon(
+                            Icons.Filled.ExpandLess,
+                            contentDescription = "Show controls",
+                            tint = Color.White,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                FloatingActionButton(
+                    onClick = onCapture,
+                    shape = CircleShape,
+                ) {
+                    Icon(Icons.Filled.PhotoCamera, contentDescription = "Capture")
+                }
+            }
+        } else {
+            ReviewOverlay(
+                pending = state.pendingCapture!!,
+                lastPhoto = state.lastPhoto,
+                lensFacing = state.lensFacing,
+                saving = state.saving,
+                onSave = onCommitPending,
+                onRetake = onDiscardPending,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ReviewOverlay(
+    pending: PendingCapture,
+    lastPhoto: com.chronophoto.data.db.entity.Photo?,
+    lensFacing: Int,
+    saving: Boolean,
+    onSave: () -> Unit,
+    onRetake: () -> Unit,
+) {
+    var showLast by remember { mutableStateOf(false) }
+    val mirror = lensFacing == CameraSelector.LENS_FACING_FRONT
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        val displayFile = if (showLast && lastPhoto != null) File(lastPhoto.filePath) else pending.file
+        AsyncImage(
+            model = displayFile,
+            contentDescription = if (showLast) "Previous photo" else "New photo",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer { scaleX = if (mirror) -1f else 1f },
+        )
+        Text(
+            text = if (showLast) "Last photo" else "New photo",
+            color = Color.White,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 16.dp)
+                .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+        )
+        if (lastPhoto != null) {
+            OutlinedButton(
+                onClick = { showLast = !showLast },
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 16.dp),
+            ) {
+                Text(if (showLast) "Show new" else "Show last")
+            }
+        }
+        Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .padding(bottom = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            ControlPanel(
-                state = state,
-                ghostOpacity = ghostOpacity,
-                onGhostOpacityChange = { ghostOpacity = it },
-                onSetManualMode = onSetManualMode,
-                onSetIso = onSetIso,
-                onSetExposureNs = onSetExposureNs,
-                onSetAwbMode = onSetAwbMode,
-                onMatchLast = onMatchLast,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-            )
-            Spacer(Modifier.height(8.dp))
-            FloatingActionButton(
-                onClick = onCapture,
-                shape = CircleShape,
-            ) {
-                Icon(Icons.Filled.PhotoCamera, contentDescription = "Capture")
+            OutlinedButton(onClick = onRetake, enabled = !saving) { Text("Retake") }
+            Button(onClick = onSave, enabled = !saving) {
+                Text(if (saving) "Saving…" else "Save")
             }
         }
     }
@@ -292,6 +391,7 @@ private fun ControlPanel(
     onSetExposureNs: (Long) -> Unit,
     onSetAwbMode: (Int) -> Unit,
     onMatchLast: () -> Unit,
+    onCollapse: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val showAny = state.lastPhoto != null || state.capabilities.supportsManualSensor
@@ -303,6 +403,18 @@ private fun ControlPanel(
             .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                IconButton(onClick = onCollapse, modifier = Modifier.height(32.dp)) {
+                    Icon(
+                        Icons.Filled.ExpandMore,
+                        contentDescription = "Hide controls",
+                        tint = Color.White,
+                    )
+                }
+            }
             if (state.lastPhoto != null) {
                 LabeledSlider(
                     label = "ghost · ${(ghostOpacity * 100).roundToInt()}%",
