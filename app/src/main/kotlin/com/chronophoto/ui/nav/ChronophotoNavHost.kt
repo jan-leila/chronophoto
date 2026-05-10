@@ -11,6 +11,7 @@ import com.chronophoto.ui.photo.PhotoDetailScreen
 import com.chronophoto.ui.projects.capture.CaptureScreen
 import com.chronophoto.ui.projects.create.NewProjectScreen
 import com.chronophoto.ui.projects.detail.ProjectDetailScreen
+import com.chronophoto.ui.projects.edit.ProjectEditScreen
 import com.chronophoto.ui.projects.list.ProjectListScreen
 
 @Composable
@@ -43,7 +44,15 @@ fun ChronophotoNavHost(
                 onBack = { navController.popBackStack() },
                 onCapture = { navController.navigate(Routes.capture(id)) },
                 onOpenPhoto = { photoId -> navController.navigate(Routes.photoDetail(photoId)) },
+                onEdit = { navController.navigate(Routes.projectEdit(id)) },
             )
+        }
+        composable(
+            route = Routes.PROJECT_EDIT_ROUTE,
+            arguments = listOf(navArgument(Routes.PROJECT_EDIT_ARG) { type = NavType.LongType }),
+        ) { entry ->
+            val id = entry.arguments?.getLong(Routes.PROJECT_EDIT_ARG) ?: return@composable
+            ProjectEditScreen(projectId = id, onBack = { navController.popBackStack() })
         }
         composable(
             route = Routes.CAPTURE_ROUTE,

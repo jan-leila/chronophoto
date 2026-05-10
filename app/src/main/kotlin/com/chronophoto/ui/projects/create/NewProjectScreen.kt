@@ -27,7 +27,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.chronophoto.ui.components.ReminderEditor
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -38,6 +45,20 @@ fun NewProjectScreen(
     val context = LocalContext.current
     val vm: NewProjectViewModel = viewModel(factory = NewProjectViewModel.factory(context))
     val state by vm.state.collectAsState()
+
+    val notificationPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { /* user response handled implicitly; we still try to schedule */ }
+
+    LaunchedEffect(state.reminderEnabled) {
+        if (state.reminderEnabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) notificationPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
     LaunchedEffect(state.saved) {
         state.saved?.let(onSaved)
@@ -83,6 +104,15 @@ fun NewProjectScreen(
             ToggleRow("Camera settings", state.storeCameraSettings, vm::setStoreCameraSettings)
             ToggleRow("Ambient brightness", state.storeAmbientBrightness, vm::setStoreAmbientBrightness)
             ToggleRow("GPS location", state.storeGps, vm::setStoreGps)
+
+            ReminderEditor(
+                enabled = state.reminderEnabled,
+                intervalAmount = state.reminderIntervalAmount,
+                intervalUnit = state.reminderIntervalUnit,
+                anchorMillis = state.reminderAnchorMillis,
+                refireMinutes = state.reminderRefireMinutes,
+                onChange = vm::setReminder,
+            )
 
             Button(
                 onClick = vm::save,

@@ -34,4 +34,13 @@ interface ProjectDao {
 
     @Query("UPDATE projects SET archivedAt = :archivedAt WHERE id = :id")
     suspend fun setArchived(id: Long, archivedAt: Long?)
+
+    @Query("SELECT * FROM projects WHERE archivedAt IS NULL AND reminderIntervalMinutes IS NOT NULL")
+    suspend fun getActiveWithReminders(): List<Project>
+
+    @Query("UPDATE projects SET reminderActiveFireMillis = :millis WHERE id = :id")
+    suspend fun setReminderActiveFire(id: Long, millis: Long?)
+
+    @Query("UPDATE projects SET reminderActiveFireMillis = NULL WHERE id = :id AND reminderActiveFireMillis IS NOT NULL AND reminderActiveFireMillis <= :photoCapturedAt")
+    suspend fun clearActiveFireIfSatisfied(id: Long, photoCapturedAt: Long): Int
 }

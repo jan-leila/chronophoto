@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.AlertDialog
@@ -50,6 +51,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.chronophoto.data.db.entity.Photo
 import com.chronophoto.data.db.entity.Project
+import com.chronophoto.reminder.ReminderSchedule
+import com.chronophoto.ui.components.DurationUnit
 import java.io.File
 import java.text.DateFormat
 import java.util.Date
@@ -61,6 +64,7 @@ fun ProjectDetailScreen(
     onBack: () -> Unit,
     onCapture: () -> Unit,
     onOpenPhoto: (Long) -> Unit,
+    onEdit: () -> Unit,
 ) {
     val context = LocalContext.current
     val vm: ProjectDetailViewModel = viewModel(
@@ -89,6 +93,11 @@ fun ProjectDetailScreen(
                     }
                 },
                 actions = {
+                    if (state.project != null) {
+                        IconButton(onClick = onEdit) {
+                            Icon(Icons.Filled.Edit, contentDescription = "Edit project")
+                        }
+                    }
                     OverflowMenu(
                         archived = state.project?.archivedAt != null,
                         onArchive = vm::archive,
@@ -213,6 +222,7 @@ private fun Header(project: Project, photoCount: Int, importing: Boolean) {
             style = MaterialTheme.typography.bodySmall,
         )
         MetadataCard(project)
+        ReminderCard(project)
     }
 }
 
@@ -225,6 +235,34 @@ private fun MetadataCard(project: Project) {
             MetadataLine("Camera settings", project.storeCameraSettings)
             MetadataLine("Ambient brightness", project.storeAmbientBrightness)
             MetadataLine("GPS location", project.storeGps)
+        }
+    }
+}
+
+@Composable
+private fun ReminderCard(project: Project) {
+    val amount = project.reminderIntervalAmount
+    val unit = project.reminderIntervalUnit?.let { runCatching { DurationUnit.valueOf(it) }.getOrNull() }
+    val anchor = project.reminderAnchorMillis
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("Reminder", fontWeight = FontWeight.SemiBold)
+            Text(
+                text = if (amount != null && unit != null && anchor != null) {
+                    val base = ReminderSchedule.describe(amount, unit, anchor).replaceFirstChar { it.uppercase() }
+                    val refire = project.reminderRefireMinutes
+                    if (refire != null) "$base · re-nag every ${ReminderSchedule.describeMinutes(refire)}" else base
+                } else {
+                    "Off"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (project.reminderActiveFireMillis != null) {
+                Text(
+                    text = "A reminder is currently waiting on this project.",
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
         }
     }
 }

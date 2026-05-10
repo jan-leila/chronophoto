@@ -79,4 +79,6 @@ dependencies {
     implementation(libs.coil.compose)
 
     implementation(libs.androidx.exifinterface)
+
+    implementation(libs.androidx.work.runtime.ktx)
 }

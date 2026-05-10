@@ -12,6 +12,8 @@ import com.chronophoto.data.db.dao.ProjectDao
 import com.chronophoto.data.db.entity.CameraSettings
 import com.chronophoto.data.db.entity.GpsLocation
 import com.chronophoto.data.db.entity.Photo
+import com.chronophoto.reminder.ReminderNotifications
+import com.chronophoto.reminder.ReminderScheduler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -54,7 +56,8 @@ class PhotoRepository(
     ): Long {
         val project = projectDao.getById(projectId)
             ?: error("Project $projectId not found")
-        return photoDao.insert(
+        val effectiveCapturedAt = capturedAt ?: System.currentTimeMillis()
+        val id = photoDao.insert(
             Photo(
                 projectId = projectId,
                 sequence = sequence,
@@ -65,6 +68,12 @@ class PhotoRepository(
                 gpsLocation = if (project.storeGps) metadata.gpsLocation else GpsLocation(),
             ),
         )
+        val cleared = projectDao.clearActiveFireIfSatisfied(projectId, effectiveCapturedAt)
+        if (cleared > 0) {
+            ReminderNotifications.cancel(context, projectId)
+            ReminderScheduler.cancelRefire(context, projectId)
+        }
+        return id
     }
 
     suspend fun importFromUri(projectId: Long, source: Uri): Long = withContext(Dispatchers.IO) {

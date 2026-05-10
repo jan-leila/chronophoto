@@ -1,0 +1,281 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 3,
+    "identityHash": "601d076911f98b6eb55be103319cd053",
+    "entities": [
+      {
+        "tableName": "projects",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `description` TEXT, `createdAt` INTEGER NOT NULL, `archivedAt` INTEGER, `reminderMinuteOfDay` INTEGER DEFAULT NULL, `reminderEnabled` INTEGER NOT NULL DEFAULT 0, `reminderIntervalMinutes` INTEGER DEFAULT NULL, `reminderActiveFireMillis` INTEGER DEFAULT NULL, `reminderRefireMinutes` INTEGER DEFAULT NULL, `storeTimestamp` INTEGER NOT NULL DEFAULT 1, `storeCameraSettings` INTEGER NOT NULL DEFAULT 1, `storeAmbientBrightness` INTEGER NOT NULL DEFAULT 1, `storeGps` INTEGER NOT NULL DEFAULT 0, `referencePhotoId` INTEGER)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "archivedAt",
+            "columnName": "archivedAt",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "reminderMinuteOfDay",
+            "columnName": "reminderMinuteOfDay",
+            "affinity": "INTEGER",
+            "notNull": false,
+            "defaultValue": "NULL"
+          },
+          {
+            "fieldPath": "reminderEnabled",
+            "columnName": "reminderEnabled",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "reminderIntervalMinutes",
+            "columnName": "reminderIntervalMinutes",
+            "affinity": "INTEGER",
+            "notNull": false,
+            "defaultValue": "NULL"
+          },
+          {
+            "fieldPath": "reminderActiveFireMillis",
+            "columnName": "reminderActiveFireMillis",
+            "affinity": "INTEGER",
+            "notNull": false,
+            "defaultValue": "NULL"
+          },
+          {
+            "fieldPath": "reminderRefireMinutes",
+            "columnName": "reminderRefireMinutes",
+            "affinity": "INTEGER",
+            "notNull": false,
+            "defaultValue": "NULL"
+          },
+          {
+            "fieldPath": "storeTimestamp",
+            "columnName": "storeTimestamp",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "1"
+          },
+          {
+            "fieldPath": "storeCameraSettings",
+            "columnName": "storeCameraSettings",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "1"
+          },
+          {
+            "fieldPath": "storeAmbientBrightness",
+            "columnName": "storeAmbientBrightness",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "1"
+          },
+          {
+            "fieldPath": "storeGps",
+            "columnName": "storeGps",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "referencePhotoId",
+            "columnName": "referencePhotoId",
+            "affinity": "INTEGER",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "photos",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `projectId` INTEGER NOT NULL, `capturedAt` INTEGER, `sequence` INTEGER NOT NULL, `filePath` TEXT NOT NULL, `thumbnailPath` TEXT, `ambientLux` REAL, `cam_exposureTimeNs` INTEGER, `cam_iso` INTEGER, `cam_focalLengthMm` REAL, `cam_apertureFNumber` REAL, `cam_whiteBalanceK` INTEGER, `cam_whiteBalanceMode` TEXT, `cam_lensFacing` INTEGER, `gps_latitude` REAL, `gps_longitude` REAL, `gps_altitudeM` REAL, `gps_accuracyM` REAL, FOREIGN KEY(`projectId`) REFERENCES `projects`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "projectId",
+            "columnName": "projectId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "capturedAt",
+            "columnName": "capturedAt",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "sequence",
+            "columnName": "sequence",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "filePath",
+            "columnName": "filePath",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "thumbnailPath",
+            "columnName": "thumbnailPath",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "ambientLux",
+            "columnName": "ambientLux",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "cameraSettings.exposureTimeNs",
+            "columnName": "cam_exposureTimeNs",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "cameraSettings.iso",
+            "columnName": "cam_iso",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "cameraSettings.focalLengthMm",
+            "columnName": "cam_focalLengthMm",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "cameraSettings.apertureFNumber",
+            "columnName": "cam_apertureFNumber",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "cameraSettings.whiteBalanceK",
+            "columnName": "cam_whiteBalanceK",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "cameraSettings.whiteBalanceMode",
+            "columnName": "cam_whiteBalanceMode",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "cameraSettings.lensFacing",
+            "columnName": "cam_lensFacing",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "gpsLocation.latitude",
+            "columnName": "gps_latitude",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "gpsLocation.longitude",
+            "columnName": "gps_longitude",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "gpsLocation.altitudeM",
+            "columnName": "gps_altitudeM",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "gpsLocation.accuracyM",
+            "columnName": "gps_accuracyM",
+            "affinity": "REAL",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_photos_projectId",
+            "unique": false,
+            "columnNames": [
+              "projectId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_photos_projectId` ON `${TABLE_NAME}` (`projectId`)"
+          },
+          {
+            "name": "index_photos_projectId_sequence",
+            "unique": false,
+            "columnNames": [
+              "projectId",
+              "sequence"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_photos_projectId_sequence` ON `${TABLE_NAME}` (`projectId`, `sequence`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "projects",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "projectId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '601d076911f98b6eb55be103319cd053')"
+    ]
+  }
+}
