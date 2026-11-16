@@ -1,0 +1,194 @@
+name: Release
+
+# Publishes a release from the `release` branch. Every push to it reads the versionCode declared
+# in app/build.gradle.kts; if a GitHub release for that version already exists the run stops
+# there, so merging to release without bumping publishes nothing. Otherwise it builds the pushed
+# commit, signs it, and creates the GitHub release, which creates the tag (v<versionCode>) on
+# that commit. Tags are never pushed by hand.
+#
+# After a release is published, the next-version job commits versionCode + 1 to main. That commit
+# is pushed with the workflow token, so no workflow runs on it.
+#
+# The APK is built unsigned (the release build type has no signingConfig) and signed afterwards
+# with apksigner.
+#
+# Secrets: CHRONOPHOTO_KEYSTORE_BASE64 (the release keystore, base64), CHRONOPHOTO_KEYSTORE_PASSWORD,
+# CHRONOPHOTO_KEY_ALIAS, CHRONOPHOTO_KEY_PASSWORD. Variable: CHRONOPHOTO_SIGNER_SHA256, the signing
+# certificate's SHA-256 (lowercase hex, no colons); a release signed with any other key stops
+# before publishing.
+
+on:
+  push:
+    branches:
+      - release
+
+permissions:
+  contents: write
+
+# Two pushes in quick succession must not both publish one version: the second waits, then finds
+# the first's release and stops.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.version.outputs.publish }}
+      code: ${{ steps.version.outputs.code }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          # The token has contents: write and the build runs third-party code, so it is not left
+          # in .git/config; the gh steps pass it as GH_TOKEN themselves.
+          persist-credentials: false
+          # All branches and tags, for the main and version checks below.
+          fetch-depth: 0
+      - name: Read the declared version and skip a released one
+        id: version
+        run: |
+          code="$(sed -n 's/^ *versionCode = \([0-9][0-9]*\)$/\1/p' app/build.gradle.kts)"
+          echo "build file: versionCode=$code"
+          test "$(printf '%s\n' "$code" | grep -c .)" = 1
+          tag="v$code"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "$tag is already released; nothing to publish"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A tag without a release is reused only if it already marks this commit.
+          if tagged="$(git rev-parse -q --verify "refs/tags/$tag^{commit}")" && [ "$tagged" != "$GITHUB_SHA" ]; then
+            echo "tag $tag already exists on $tagged, not on $GITHUB_SHA; bump versionCode"
+            exit 1
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      # Only reviewed code is released: the pushed tree must be exactly the tree of a commit on
+      # main. Holds however the PR into release was merged and rules out content that exists
+      # only on release.
+      - name: Check the released tree is on main
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          tree="$(git rev-parse "$GITHUB_SHA^{tree}")"
+          if ! git log --format=%T refs/remotes/origin/main | grep -qxF "$tree"; then
+            echo "the tree of $GITHUB_SHA matches no commit on main; merge main into release unchanged"
+            exit 1
+          fi
+      - name: Check the number goes up
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          previous="$(git tag --list 'v[0-9]*' | sed 's/^v//' | grep -E '^[0-9]+$' | sort -n | tail -n 1)"
+          echo "newest release tag number: ${previous:-none}"
+          if [ -n "$previous" ]; then
+            test "$CODE" -gt "$previous"
+          fi
+        env:
+          CODE: ${{ steps.version.outputs.code }}
+      - name: Setup JDK
+        if: steps.version.outputs.publish == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 21
+      - name: Lint and test
+        if: steps.version.outputs.publish == 'true'
+        run: ./gradlew --no-daemon --stacktrace :app:lintDebug :app:testDebugUnitTest
+      - name: Build the unsigned release APK
+        if: steps.version.outputs.publish == 'true'
+        run: ./gradlew --no-daemon --stacktrace :app:assembleRelease
+      - name: Check the built APK against the release number
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          aapt2="$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -n 1)"
+          badging="$("$aapt2" dump badging app/build/outputs/apk/release/app-release-unsigned.apk | head -n 1)"
+          echo "$badging"
+          test "$(printf '%s' "$badging" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p")" = "$CODE"
+          test "$(printf '%s' "$badging" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")" = "$CODE"
+          test "$(printf '%s' "$badging" | sed -n "s/.*package: name='\([^']*\)'.*/\1/p")" = "com.chronophoto"
+        env:
+          CODE: ${{ steps.version.outputs.code }}
+      - name: Sign the APK
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n 1)"
+          printf '%s' "$CHRONOPHOTO_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          test -s "$RUNNER_TEMP/release.jks"
+          mkdir -p "$RUNNER_TEMP/out"
+          "$apksigner" sign \
+            --ks "$RUNNER_TEMP/release.jks" --ks-key-alias "$CHRONOPHOTO_KEY_ALIAS" \
+            --ks-pass env:CHRONOPHOTO_KEYSTORE_PASSWORD --key-pass env:CHRONOPHOTO_KEY_PASSWORD \
+            --out "$RUNNER_TEMP/out/chronophoto-v$CODE.apk" \
+            app/build/outputs/apk/release/app-release-unsigned.apk
+          rm -f "$RUNNER_TEMP/release.jks"
+        env:
+          CODE: ${{ steps.version.outputs.code }}
+          CHRONOPHOTO_KEYSTORE_BASE64: ${{ secrets.CHRONOPHOTO_KEYSTORE_BASE64 }}
+          CHRONOPHOTO_KEYSTORE_PASSWORD: ${{ secrets.CHRONOPHOTO_KEYSTORE_PASSWORD }}
+          CHRONOPHOTO_KEY_ALIAS: ${{ secrets.CHRONOPHOTO_KEY_ALIAS }}
+          CHRONOPHOTO_KEY_PASSWORD: ${{ secrets.CHRONOPHOTO_KEY_PASSWORD }}
+      - name: Check the signer
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n 1)"
+          certs="$("$apksigner" verify --print-certs "$RUNNER_TEMP"/out/*.apk)"
+          printf '%s\n' "$certs"
+          digest="$(printf '%s\n' "$certs" | sed -n 's/^.*Signer.* certificate SHA-256 digest: //p' | sort -u)"
+          test "$(printf '%s\n' "$digest" | grep -c .)" = 1
+          test -n "$CHRONOPHOTO_SIGNER_SHA256" && test "$digest" = "$CHRONOPHOTO_SIGNER_SHA256"
+        env:
+          CHRONOPHOTO_SIGNER_SHA256: ${{ vars.CHRONOPHOTO_SIGNER_SHA256 }}
+      # Creates the tag on the built commit. Last, so a failed check leaves neither tag nor release.
+      - name: Publish the GitHub release and tag
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          cd "$RUNNER_TEMP/out"
+          sha256sum chronophoto-*.apk > "chronophoto-v$CODE.apk.sha256"
+          printf 'Signing certificate SHA-256: `%s`\n' "$CHRONOPHOTO_SIGNER_SHA256" > notes.md
+          gh release create "v$CODE" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Chronophoto v$CODE" --notes-file notes.md --generate-notes \
+            chronophoto-*.apk "chronophoto-v$CODE.apk.sha256"
+        env:
+          CODE: ${{ steps.version.outputs.code }}
+          GH_TOKEN: ${{ github.token }}
+          CHRONOPHOTO_SIGNER_SHA256: ${{ vars.CHRONOPHOTO_SIGNER_SHA256 }}
+
+  # Runs only once the release above is published, and never sees its build. If main already
+  # declares something other than the released version (someone bumped it by hand), it is left
+  # as it is.
+  next-version:
+    needs: release
+    if: needs.release.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: main
+      - name: Commit the next version to main
+        run: |
+          file=app/build.gradle.kts
+          code="$(sed -n 's/^ *versionCode = \([0-9][0-9]*\)$/\1/p' "$file")"
+          if [ "$code" != "$CODE" ]; then
+            echo "main declares versionCode=$code, not the released $CODE; leaving it"
+            exit 0
+          fi
+          next=$((CODE + 1))
+          sed -i "s/^\( *versionCode = \)$CODE\$/\1$next/" "$file"
+          git add "$file"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -q -m "Start v$next: record versionCode $next" -m "v$CODE is released, so main now declares the next version."
+          git show --stat HEAD
+          # The only command that gives git the token. A rejected push (main moved meanwhile)
+          # fails the job; re-running it checks out the new main.
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $auth" push origin HEAD:main
+        env:
+          CODE: ${{ needs.release.outputs.code }}
+          TOKEN: ${{ github.token }}
