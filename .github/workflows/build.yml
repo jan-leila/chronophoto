@@ -1,0 +1,33 @@
+name: Build
+
+on: [push]
+
+# The job only builds and asserts; nothing here writes to the repository, so
+# the workflow token gets read access and no more.
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      # 17 is the JDK the flake's dev shell builds with.
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 17
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Cache build deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: android-deps-${{ runner.os }}-${{ hashFiles('gradle/**', 'gradlew*', 'gradle.properties', '*.gradle*', 'app/*.gradle*') }}
+          restore-keys: |
+            android-deps-${{ runner.os }}-
+      # assembleRelease on a checkout with no keystore packages unsigned.
+      - name: Build and Test
+        run: ./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug
